@@ -1,7 +1,6 @@
 import os
-import asyncio
-from playwright.async_api import async_playwright
 import requests
+import json
 
 def send_telegram(message):
     token = os.environ.get('TELEGRAM_TOKEN')
@@ -10,53 +9,36 @@ def send_telegram(message):
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     requests.post(url, json={'chat_id': chat_id, 'text': message})
 
-async def check_imax():
-    target_date = "20260505"
-    print(f"[{target_date}] 용아맥 체크 시작 (강화된 우회 모드)")
+def check_imax():
+    target_date = "20260505" # 오늘 날짜
+    # CGV 모바일 용산아이파크몰(0013) 상영시간표 API
+    url = f"http://m.cgv.co.kr/WebApp/Reservation/Common/ajaxShowTimes.aspx?theatercode=0013&date={target_date}&screencode=&moviecode="
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+        'Referer': 'http://m.cgv.co.kr/WebApp/Reservation/Schedule.aspx',
+        'X-Requested-With': 'XMLHttpRequest'
+    }
 
-    async with async_playwright() as p:
-        # 브라우저 실행 시 '자동화 흔적' 제거 옵션 추가
-        browser = await p.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            viewport={'width': 1280, 'height': 800}
-        )
-        page = await context.new_page()
-
-        # 자바스크립트 변수 조작으로 봇 감지 우회
-        await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-
-        url = f"http://www.cgv.co.kr/common/showtimes/iframeTheater.aspx?theatercode=0013&date={target_date}"
+    try:
+        response = requests.get(url, headers=headers)
+        # API 응답에서 영화 제목들 추출
+        # 모바일 API는 HTML 조각을 반환하므로 'IMAX' 글자가 있는지 바로 확인하는 게 빠릅니다.
         
-        try:
-            # 타임아웃을 15초로 늘리고 조금 더 여유 있게 기다립니다
-            await page.goto(url, wait_until="load", timeout=30000)
-            await asyncio.sleep(3) # 페이지 로드 후 데이터가 뿌려질 시간을 명시적으로 줌
-            
-            # 영화 제목이 있는지 확인 (실패해도 바로 종료되지 않게 함)
-            movie_elements = await page.query_selector_all("div.info-movie strong")
-            
-            if movie_elements:
-                movie_list = [await el.inner_text() for el in movie_elements]
-                print(f"--- 발견된 영화 목록 ({len(movie_list)}개) ---")
-                for m in movie_list: print(f"- {m.strip()}")
-                
-                page_content = await page.content()
-                if "IMAX" in page_content:
-                    print("🚀 IMAX 발견!")
-                    send_telegram(f"🚀 [용아맥 알림] {target_date} IMAX 예매 오픈!")
-                else:
-                    print("결과: IMAX 없음")
-            else:
-                print("⚠️ 영화 목록을 찾지 못했습니다. CGV가 여전히 차단 중입니다.")
-                # 디버깅을 위해 현재 페이지 텍스트 일부 출력
-                text = await page.content()
-                print(f"페이지 일부 내용: {text[:200]}")
+        if "IMAX" in response.text:
+            print(f"🚀 [{target_date}] IMAX 상영 정보 발견!")
+            send_telegram(f"🚀 [용아맥 알림] {target_date} IMAX 예매가 열렸습니다!")
+            return True
+        else:
+            print(f"[{target_date}] 아직 IMAX 상영 정보가 없습니다.")
+            # 데이터가 아예 안 오는지 확인하기 위해 응답 길이를 출력해봅니다.
+            if len(response.text) < 100:
+                print("⚠️ 응답 데이터가 너무 짧습니다. 차단되었을 가능성이 있습니다.")
+            return False
 
-        except Exception as e:
-            print(f"실행 중 오류: {e}")
-
-        await browser.close()
+    except Exception as e:
+        print(f"오류 발생: {e}")
+        return False
 
 if __name__ == "__main__":
-    asyncio.run(check_imax())
+    check_imax()
