@@ -1,63 +1,51 @@
 import os
-import requests
+import asyncio
+from playwright.async_api import async_playwright
 from datetime import datetime, timedelta
 
-def send_telegram(message):
+async def send_telegram(message):
+    import requests
     token = os.environ.get('TELEGRAM_TOKEN')
     chat_id = os.environ.get('CHAT_ID')
     if not token or not chat_id: return
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     requests.post(url, json={'chat_id': chat_id, 'text': message})
 
-def check_cgv():
+async def check_cgv():
     now_kst = datetime.utcnow() + timedelta(hours=9)
-    target_date = now_kst.strftime("%Y%m%d") 
-    
-    print(f"--- [{target_date}] 용산 CGV 세션 우회 체크 ---")
+    target_date = now_kst.strftime("%Y%m%d")
+    print(f"--- [{target_date}] 용산 CGV 브라우저 우회 체크 ---")
 
-    # 세션 객체 생성 (쿠키를 자동으로 관리해줍니다)
-    session = requests.Session()
-    
-    # 1. 먼저 메인 페이지나 스케줄 페이지에 접속해서 기본 쿠키를 굽습니다.
-    main_url = "http://m.cgv.co.kr/WebApp/Reservation/Schedule.aspx"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
-    }
-    session.get(main_url, headers=headers)
+    async with async_playwright() as p:
+        # 브라우저 실행 (사람처럼 보이기 위해 헤더 설정)
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
+        )
+        page = await context.new_page()
 
-    # 2. 획득한 쿠키를 가지고 실제 데이터 API에 접근합니다.
-    ajax_url = "http://m.cgv.co.kr/WebApp/Reservation/Common/ajaxShowTimes.aspx"
-    params = {
-        'theatercode': '0013',
-        'date': target_date,
-    }
-    
-    # AJAX 요청임을 알리는 헤더를 추가합니다.
-    headers.update({
-        'Referer': main_url,
-        'X-Requested-With': 'XMLHttpRequest'
-    })
+        # 실제 모바일 예약 페이지 접속
+        url = f"http://m.cgv.co.kr/WebApp/Reservation/Schedule.aspx?theaterCode=0013&date={target_date}"
+        await page.goto(url, wait_until="networkidle")
 
-    try:
-        response = session.get(ajax_url, params=params, headers=headers)
-        data = response.text
-        
-        # 로그 확인을 위해 수신 데이터가 에러 페이지인지 실제 데이터인지 판단
-        if "errorPage" in data:
-            print("❌ 실패: 여전히 에러 페이지(CSS)가 반환되었습니다.")
-            print(f"데이터 일부: {data[:200]}")
-        elif "IMAX" in data.upper():
-            print("🚀 성공: IMAX 발견!")
-            send_telegram(f"🔥 [용아맥 알림] {target_date} IMAX 예매 오픈!")
-        elif "strong" in data:
-            print("✅ 성공: 데이터를 가져왔으나 IMAX는 아직 없습니다.")
-            # 성공했을 때만 데이터 원본을 살짝 보여줍니다.
-            print(f"데이터 샘플: {data[:200]}")
+        # 영화 목록이 로드될 때까지 잠시 대기
+        await page.wait_for_timeout(3000)
+
+        # 페이지 전체 텍스트 가져오기
+        content = await page.content()
+
+        if "IMAX" in content.upper():
+            print("🚀 결과: IMAX 발견!")
+            await send_telegram(f"🔥 [용아맥 알림] {target_date} IMAX 오픈!")
+        elif "영화상세" in content or "시간표" in content:
+            print("✅ 성공: 상영 정보 읽기 완료 (IMAX는 아직 없음)")
         else:
-            print("⚠️ 알 수 없는 응답입니다. 데이터가 비어있을 수 있습니다.")
-            
-    except Exception as e:
-        print(f"에러 발생: {e}")
+            print("⚠️ 확인 실패: 데이터를 불러왔으나 영화 정보가 보이지 않습니다.")
+            # 디버깅을 위해 페이지 제목 출력
+            title = await page.title()
+            print(f"현재 페이지 제목: {title}")
+
+        await browser.close()
 
 if __name__ == "__main__":
-    check_cgv()
+    asyncio.run(check_cgv())
