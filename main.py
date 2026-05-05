@@ -38,7 +38,7 @@ def check_imax(date):
         return False
 
 if __name__ == "__main__":
-    target_date = "20260404"  # 확인하고 싶은 날짜 (4월 4일)
+    target_date = "20260509"  # 확인하고 싶은 날짜 (4월 4일)
     print(f"{target_date} 용아맥 체크 시작...")
     
     if check_imax(target_date):
