@@ -3,68 +3,58 @@ import asyncio
 from playwright.async_api import async_playwright
 import requests
 
-# 텔레그램 알림 함수
 def send_telegram(message):
     token = os.environ.get('TELEGRAM_TOKEN')
     chat_id = os.environ.get('CHAT_ID')
-    if not token or not chat_id:
-        print("토큰이나 채팅 ID 설정이 누락되었습니다.")
-        return
+    if not token or not chat_id: return
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    try:
-        requests.post(url, json={'chat_id': chat_id, 'text': message})
-    except Exception as e:
-        print(f"텔레그램 전송 오류: {e}")
+    requests.post(url, json={'chat_id': chat_id, 'text': message})
 
 async def check_imax():
-    target_date = "20260505" # 테스트를 위해 오늘 날짜로 설정
-    print(f"[{target_date}] 용아맥 체크를 시작합니다 (Playwright 모드)")
+    target_date = "20260505"
+    print(f"[{target_date}] 용아맥 체크 시작 (강화된 우회 모드)")
 
     async with async_playwright() as p:
-        # 브라우저 실행 (화면 없이 실행하는 headless 모드)
-        browser = await p.chromium.launch(headless=True)
-        # 실제 사람 브라우저처럼 보이게 컨텍스트 설정
+        # 브라우저 실행 시 '자동화 흔적' 제거 옵션 추가
+        browser = await p.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
         context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            viewport={'width': 1280, 'height': 800}
         )
         page = await context.new_page()
 
-        # CGV 용산아이파크몰 상영시간표 페이지 접속
+        # 자바스크립트 변수 조작으로 봇 감지 우회
+        await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+
         url = f"http://www.cgv.co.kr/common/showtimes/iframeTheater.aspx?theatercode=0013&date={target_date}"
         
         try:
-            # 페이지 이동 및 네트워크 유휴 상태까지 대기 (데이터 로딩 시간 확보)
-            await page.goto(url, wait_until="networkidle")
+            # 타임아웃을 15초로 늘리고 조금 더 여유 있게 기다립니다
+            await page.goto(url, wait_until="load", timeout=30000)
+            await asyncio.sleep(3) # 페이지 로드 후 데이터가 뿌려질 시간을 명시적으로 줌
             
-            # 영화 제목들이 나타날 때까지 최대 5초 대기
-            await page.wait_for_selector("div.info-movie strong", timeout=5000)
-
-            # 영화 제목들 추출
+            # 영화 제목이 있는지 확인 (실패해도 바로 종료되지 않게 함)
             movie_elements = await page.query_selector_all("div.info-movie strong")
-            movie_list = []
-            for el in movie_elements:
-                title = await el.inner_text()
-                movie_list.append(title.strip())
-
-            print(f"--- 발견된 영화 목록 ({len(movie_list)}개) ---")
-            for m in movie_list:
-                print(f"- {m}")
-            print("------------------------------------------")
-
-            # 'IMAX' 글자가 포함되어 있는지 확인
-            # 페이지 전체 텍스트에서 검색
-            page_content = await page.content()
-            if "IMAX" in page_content:
-                print("🚀 결과: IMAX 상영 정보 발견!")
-                send_telegram(f"🚀 [용아맥 알림] {target_date} IMAX 예매 정보가 확인되었습니다!")
+            
+            if movie_elements:
+                movie_list = [await el.inner_text() for el in movie_elements]
+                print(f"--- 발견된 영화 목록 ({len(movie_list)}개) ---")
+                for m in movie_list: print(f"- {m.strip()}")
+                
+                page_content = await page.content()
+                if "IMAX" in page_content:
+                    print("🚀 IMAX 발견!")
+                    send_telegram(f"🚀 [용아맥 알림] {target_date} IMAX 예매 오픈!")
+                else:
+                    print("결과: IMAX 없음")
             else:
-                print("결과: 아직 IMAX 정보는 없습니다.")
+                print("⚠️ 영화 목록을 찾지 못했습니다. CGV가 여전히 차단 중입니다.")
+                # 디버깅을 위해 현재 페이지 텍스트 일부 출력
+                text = await page.content()
+                print(f"페이지 일부 내용: {text[:200]}")
 
         except Exception as e:
-            print(f"실행 중 오류 발생: {e}")
-            # 영화 목록을 아예 못 가져온 경우에만 출력
-            if 'movie_list' not in locals() or len(movie_list) == 0:
-                print("⚠️ 여전히 목록을 가져오지 못했습니다. CGV의 접근 차단이 강력합니다.")
+            print(f"실행 중 오류: {e}")
 
         await browser.close()
 
