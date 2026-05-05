@@ -1,7 +1,6 @@
 import os
 import requests
 from datetime import datetime, timedelta
-import re
 
 def send_telegram(message):
     token = os.environ.get('TELEGRAM_TOKEN')
@@ -11,37 +10,46 @@ def send_telegram(message):
     requests.post(url, json={'chat_id': chat_id, 'text': message})
 
 def check_cgv():
-    # 한국 시간 기준 오늘 날짜 구하기
     now_kst = datetime.utcnow() + timedelta(hours=9)
     target_date = now_kst.strftime("%Y%m%d") 
     
-    print(f"--- [{target_date}] 용산 CGV 체크 시작 ---")
+    print(f"--- [{target_date}] 용산 CGV 정밀 체크 시작 ---")
 
-    # API 대신 실제 모바일 웹 페이지 주소 사용 (더 안정적임)
-    url = f"http://m.cgv.co.kr/WebApp/Reservation/Schedule.aspx?theaterCode=0013&date={target_date}"
+    # CGV에서 상영 시간표를 가져오는 가장 원천 데이터 주소 (JSON 방식)
+    url = "http://m.cgv.co.kr/WebApp/Reservation/Common/ajaxShowTimes.aspx"
+    
+    params = {
+        'theatercode': '0013', # 용산아이파크몰
+        'date': target_date,
+        'screencode': '',
+        'moviecode': ''
+    }
     
     headers = {
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1'
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1',
+        'Referer': f'http://m.cgv.co.kr/WebApp/Reservation/Schedule.aspx?theaterCode=0013&date={target_date}',
+        'X-Requested-With': 'XMLHttpRequest'
     }
 
     try:
-        response = requests.get(url, headers=headers)
-        html_content = response.text
+        # 이 주소는 HTML이 아니라 데이터 조각(HTML snippets)을 줍니다.
+        response = requests.get(url, params=params, headers=headers)
+        data = response.text
 
-        # 1. IMAX가 있는지 확인
-        if "IMAX" in html_content:
+        # 로그에 데이터가 조금이라도 찍히는지 확인 (디버깅용)
+        print(f"데이터 수신 길이: {len(data)}")
+
+        if "IMAX" in data:
             print(f"🚀 {target_date} IMAX 상영관 발견!")
             send_telegram(f"🔥 [용아맥 알림] {target_date} IMAX 예매 오픈!")
-            return
-
-        # 2. 영화 제목들 추출 (정규식 사용)
-        # 모바일 페이지에서 영화 제목은 보통 <strong class="title"> 또는 특정 패턴 안에 있습니다.
-        # 단순히 '상영 정보가 있는지'만 체크하기 위해 "영화상세" 같은 단어가 있는지 봅니다.
-        if "영화상세" in html_content or "movie_info" in html_content.lower():
-            print(f"✅ {target_date} 상영 정보는 불러왔으나, 아직 IMAX는 없습니다.")
+        elif "strong" in data or "theater_info" in data:
+            print(f"✅ {target_date} 상영 정보 수신 성공! (하지만 IMAX는 없음)")
+            # 어떤 영화가 있는지 샘플로 하나만 출력해봅니다.
+            if "<strong>" in data:
+                sample_title = data.split("<strong>")[1].split("</strong>")[0]
+                print(f"확인된 영화 예시: {sample_title}")
         else:
-            # 아예 정보가 없는 경우, CGV에서 아직 날짜를 안 열었을 수 있습니다.
-            print(f"ℹ️ {target_date} 상영 정보 자체가 아직 등록되지 않았습니다.")
+            print(f"⚠️ {target_date} 여전히 데이터를 가져오지 못했습니다. (CGV 차단 중)")
             
     except Exception as e:
         print(f"에러 발생: {e}")
