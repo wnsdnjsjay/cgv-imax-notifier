@@ -1,28 +1,29 @@
-name: CGV Playwright Notifier
+name: CGV IMAX Notifier (Lightweight)
 
 on:
   schedule:
-    - cron: '*/10 * * * *' # 브라우저 실행은 리소스를 더 쓰므로 10분 정도로 권장해요
-  workflow_dispatch:
+    - cron: '*/10 * * * *' # 10분마다 자동으로 실행
+  workflow_dispatch: # 수동으로 버튼 눌러 실행 가능
 
 jobs:
   check-imax:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
           python-version: '3.9'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install playwright requests
-          playwright install chromium # 크롬 브라우저 엔진 설치
+          pip install requests # Playwright 설치 없이 requests만 설치
 
-      - name: Run script
+      - name: Run CGV script
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: python main.py
-
